@@ -1,0 +1,135 @@
+﻿@rendermode InteractiveServer
+@using OpenAI.RealtimeConversation
+@using System.Text
+@inject RealtimeConversationClient client
+
+@code {
+    [Parameter]
+    public EventCallback<string> OnNewMessage { get; set; }
+
+    private StringBuilder currentTranscript = new();
+
+    public async Task StartConversationAsync()
+    {
+        try
+        {
+            await LogMessage("Starting conversation...");
+            using RealtimeConversationSession session = await client.StartConversationSessionAsync();
+
+            ConversationFunctionTool finishConversationTool = new()
+                {
+                    Name = "user_wants_to_finish_conversation",
+                    Description = "Invoked when the user says goodbye, expresses being finished, or otherwise seems to want to stop the interaction.",
+                    Parameters = BinaryData.FromString("{}")
+                };
+
+            await session.ConfigureSessionAsync(new ConversationSessionOptions
+                {
+                    Tools = { finishConversationTool },
+                    InputTranscriptionOptions = new()
+                    {
+                        Model = "whisper-1",
+                    },
+                });
+
+            SpeakerOutput speakerOutput = new();
+
+            await foreach (var update in session.ReceiveUpdatesAsync())
+            {
+                if (update is ConversationSessionStartedUpdate)
+                {
+                    await LogMessage("Connected: session started");
+
+                    // Start capturing microphone input
+                    _ = Task.Run(async () =>
+                    {
+                        using MicrophoneAudioStream microphoneInput = MicrophoneAudioStream.Start();
+                        LogMessage("Listening to microphone input...");
+                        LogMessage("(Just tell the app you're done to finish)");
+                        await session.SendInputAudioAsync(microphoneInput);
+                    });
+                }
+
+                if (update is ConversationInputSpeechStartedUpdate speechStartedUpdate)
+                {
+                    await LogMessage($"Start of speech detected @ {speechStartedUpdate.AudioStartTime}");
+                    speakerOutput.ClearPlayback();
+                }
+
+                if (update is ConversationInputSpeechFinishedUpdate speechFinishedUpdate)
+                {
+                    await LogMessage($"End of speech detected @ {speechFinishedUpdate.AudioEndTime}");
+                }
+
+                if (update is ConversationInputTranscriptionFinishedUpdate transcriptionFinishedUpdate)
+                {
+                    await LogMessage($"USER: {transcriptionFinishedUpdate.Transcript}");
+                }
+
+                if (update is ConversationItemStreamingPartDeltaUpdate deltaUpdate)
+                {
+                    // Append the text part to the current transcript if it exists
+                    if (!string.IsNullOrWhiteSpace(deltaUpdate.Text))
+                    {
+                        currentTranscript.Append(deltaUpdate.Text + " ");
+                    }
+
+                    if (deltaUpdate.AudioBytes != null && deltaUpdate.AudioBytes.ToArray().Length > 0)
+                    {
+                        speakerOutput.EnqueueForPlayback(deltaUpdate.AudioBytes);
+                    }
+
+                    await LogMessage(deltaUpdate.AudioTranscript + deltaUpdate.Text);
+                }
+
+                if (update is ConversationItemStreamingFinishedUpdate itemFinishedUpdate)
+                {
+                    // Clean up and finalize the accumulated transcript
+                    string finalizedTranscript = currentTranscript.ToString()
+                        .Replace("\n", " ")
+                        .Replace("\r", " ")
+                        .Trim();
+
+                    if (!string.IsNullOrWhiteSpace(finalizedTranscript))
+                    {
+                        await LogMessage(finalizedTranscript);
+                    }
+
+                    // Clear the StringBuilder for the next response
+                    currentTranscript.Clear();
+
+                    await LogMessage("Response completed.");
+                    if (itemFinishedUpdate.FunctionName == finishConversationTool.Name)
+                    {
+                        await LogMessage("Finish tool invoked -- ending conversation!");
+                        break;
+                    }
+                }
+
+                if (update is ConversationErrorUpdate errorUpdate)
+                {
+                    await LogMessage($"ERROR: {errorUpdate.Message}");
+                    await LogMessage(errorUpdate.GetRawContent().ToString());
+                    break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await LogMessage($"Error: {ex.Message}");
+        }
+    }
+
+    private async Task LogMessage(string message)
+    {
+        if (OnNewMessage.HasDelegate)
+        {
+            // Clean up excessive whitespace and empty messages
+            string cleanedMessage = System.Text.RegularExpressions.Regex.Replace(message, @"\s+", " ").Trim();
+            if (!string.IsNullOrWhiteSpace(cleanedMessage))
+            {
+                await OnNewMessage.InvokeAsync(cleanedMessage);
+            }
+        }
+    }
+}

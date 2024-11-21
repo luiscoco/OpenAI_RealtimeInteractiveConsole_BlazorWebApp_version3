@@ -1,0 +1,33 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using OpenAI.RealtimeConversation
+
+<PageTitle>Home</PageTitle>
+
+<h1>Hello, world!</h1>
+<p>Welcome to your new app.</p>
+
+<button class="btn btn-primary" @onclick="StartConversation">Start Conversation</button>
+
+<UIComponent Messages="messages" />
+
+<ChatbotComponent @ref="chatbotComponent" OnNewMessage="HandleNewMessage" />
+
+@code {
+    private List<string> messages = new();
+    private ChatbotComponent? chatbotComponent;
+
+    private async Task StartConversation()
+    {
+        if (chatbotComponent != null)
+        {
+            await chatbotComponent.StartConversationAsync();
+        }
+    }
+
+    private void HandleNewMessage(string message)
+    {
+        messages.Add(message);
+        InvokeAsync(StateHasChanged); // Refresh UI only when new messages are added
+    }
+}

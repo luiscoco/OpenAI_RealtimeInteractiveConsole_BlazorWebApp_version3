@@ -1,0 +1,22 @@
+﻿<h3>Messages</h3>
+@* <textarea readonly style="width: 100%; height: 300px;">
+    @DisplayMessages
+</textarea> *@
+
+@* <textarea readonly style="width: 100%; height: 300px;">
+    @foreach (var message in Messages)
+    {
+        @($"{message}\n")
+    }
+</textarea> *@
+<h3>Messages</h3>
+<textarea readonly style="width: 100%; height: 300px;">
+    @string.Join("\n", Messages.Select(m => m.Trim()))
+</textarea>
+
+@code {
+    [Parameter]
+    public List<string> Messages { get; set; } = new();
+
+    private string DisplayMessages => string.Join("\n", Messages);
+}
